@@ -1,4 +1,4 @@
-# nh0cksh0ck02 tiny-chess-01 tactical engine (MIT)
+# nh0cksh0ck02 tiny-chess-01 engine: enhanced with center heuristics & tactical safety
 import json, os, sys, urllib.error, urllib.request
 
 ENV_URL = os.environ.get("MAKEFUN_ENV_URL") or sys.exit("MAKEFUN_ENV_URL is not set")
@@ -73,12 +73,12 @@ def choose(fen, legal):
         promo = VALS[move[4].lower()] if len(move) == 5 else 0
         mover_val = VALS[mover.lower()]
         pos_delta = int(center_dist(t_sq) * 8 - center_dist(f_sq) * 8)
-        score = taken * 10 + promo * 10 + pos_delta
+        score = taken * 12 + promo * 10 + pos_delta
         if attacked(t_sq, opp, board):
             loss = mover_val - taken
-            score -= (loss * 10 if loss > 0 else 50)
+            score -= (loss * 12 if loss > 0 else 50)
         if attacked(f_sq, opp, board) and not attacked(t_sq, opp, board):
-            score += mover_val * 5
+            score += mover_val * 6
         return (-score, -promo, mover_val, move)
 
     return min(legal, key=rank)
