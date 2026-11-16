@@ -1,92 +1,80 @@
-# nh0cksh0ck02 tiny-chess-01 engine: enhanced with center heuristics & tactical safety
-import json, os, sys, urllib.error, urllib.request
+# nh0cksh0ck02 tiny-chess-01 Engine
+import base64, json, os, sys, urllib.request
 
 ENV_URL = os.environ.get("MAKEFUN_ENV_URL") or sys.exit("MAKEFUN_ENV_URL is not set")
-VALS = {"p": 100, "n": 320, "b": 330, "r": 500, "q": 900, "k": 20000}
+VALS = {"P": 100, "N": 320, "B": 330, "R": 500, "Q": 900, "K": 20000}
+D, DG = (-10, 1, 10, -1), (-11, -9, 9, 11)
+DIRS = {"P": (-10,-20,-11,-9), "N": (-21,-19,-12,-8,8,12,19,21), "B": DG, "R": D, "Q": D + DG, "K": D + DG}
 
-def post(path, body):
-    req = urllib.request.Request(ENV_URL + path, data=json.dumps(body).encode(), headers={"content-type": "application/json"})
-    try:
-        with urllib.request.urlopen(req) as res:
-            return json.load(res)
-    except urllib.error.HTTPError as e:
-        sys.exit(f"{path}: HTTP {e.code} {e.read().decode(errors='replace')}")
+PST = {p: [x - 50 for x in base64.b64decode("MjIyMjc8Ph43LSgyMjIyTjc3PlA8PkhSZGRkZDIyMjIAChQUCh4yNxQ3PkQUMkRIFDdESBQyPkQKHjIyAAoUFB4oKCgoNzIyKD4+PigyPj4oNzg+KDI4PigyMjIeKCgoRlI8MkZGMjIoHh4eHhQUChQKCgAUCgoAFAoKABQKCgA=")[i*32:(i+1)*32]] for i, p in enumerate("PNBK")}
 
-def board_of(fen):
-    board = {}
-    for i, row in enumerate(fen.split()[0].split("/")):
-        col = 0
-        for c in row:
-            if c.isdigit(): col += int(c)
-            else:
-                board["abcdefgh"[col] + str(8 - i)] = c
-                col += 1
-    return board
+rot = lambda b: [c.swapcase() for c in reversed(b)]
 
-def center_dist(sq):
-    f, r = ord(sq[0]) - ord("a"), int(sq[1]) - 1
-    return 4 - max(abs(f - 3.5), abs(r - 3.5))
+post = lambda p, b: json.load(urllib.request.urlopen(urllib.request.Request(ENV_URL + p, data=json.dumps(b).encode(), headers={"content-type": "application/json"})))
 
-def attacked(sq, by_white, board):
-    f, r = ord(sq[0]) - ord("a"), int(sq[1]) - 1
-    pr, pc = (r - 1, "P") if by_white else (r + 1, "p")
-    if 0 <= pr <= 7:
-        for df in (-1, 1):
-            if 0 <= f + df <= 7 and board.get(chr(ord("a") + f + df) + str(pr + 1)) == pc: return True
-    nc = "N" if by_white else "n"
-    for df, dr in [(-2, -1), (-2, 1), (-1, -2), (-1, 2), (1, -2), (1, 2), (2, -1), (2, 1)]:
-        if 0 <= f + df <= 7 and 0 <= r + dr <= 7 and board.get(chr(ord("a") + f + df) + str(r + dr + 1)) == nc: return True
-    kc = "K" if by_white else "k"
-    for df in (-1, 0, 1):
-        for dr in (-1, 0, 1):
-            if (df or dr) and 0 <= f + df <= 7 and 0 <= r + dr <= 7 and board.get(chr(ord("a") + f + df) + str(r + dr + 1)) == kc: return True
-    dc = ("B", "Q") if by_white else ("b", "q")
-    for df, dr in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
-        cf, cr = f + df, r + dr
-        while 0 <= cf <= 7 and 0 <= cr <= 7:
-            p = board.get(chr(ord("a") + cf) + str(cr + 1))
-            if p:
-                if p in dc: return True
-                break
-            cf += df; cr += dr
-    oc = ("R", "Q") if by_white else ("r", "q")
-    for df, dr in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-        cf, cr = f + df, r + dr
-        while 0 <= cf <= 7 and 0 <= cr <= 7:
-            p = board.get(chr(ord("a") + cf) + str(cr + 1))
-            if p:
-                if p in oc: return True
-                break
-            cf += df; cr += dr
-    return False
+sq_to_i = lambda s: (10 - int(s[1])) * 10 + ord(s[0]) - 96
+fen_to_board = lambda f: list(" "*20 + "".join(f" {''.join('.'*int(c) if c.isdigit() else c for c in r)} " for r in f.split()[0].split("/")) + " "*20)
+pst = lambda p, sq: PST[p.upper()][(9 - sq // 10 if p.isupper() else sq // 10 - 2) * 4 + min(sq % 10 - 1, 8 - sq % 10)] if p.upper() in PST else 0
+eval_pos = lambda b: sum(VALS[p] + pst(p, sq) if p.isupper() else -VALS[p.upper()] - pst(p, sq) for sq, p in enumerate(b) if p.upper() in VALS)
+move_score = lambda b, i, j: (VALS[b[j].upper()] * 10 - VALS[b[i]]) if b[j].islower() else (900 if b[i] == "P" and j // 10 == 2 else pst(b[i], j) - pst(b[i], i))
 
-def choose(fen, legal):
-    board = board_of(fen)
-    white_turn = fen.split()[1] == "w"
-    opp = not white_turn
+def gen_moves(b, caps=False):
+  for i, p in enumerate(b):
+    if not p.isupper(): continue
+    if p == "P":
+      if not caps and b[i - 10] == ".":
+        yield (i, i - 10)
+        if i // 10 == 8 and b[i - 20] == ".": yield (i, i - 20)
+      for d in (-11, -9):
+        if b[i + d].islower(): yield (i, i + d)
+    elif p in DIRS:
+      for d in DIRS[p]:
+        j = i + d
+        while True:
+          t = b[j]
+          if t == " " or t.isupper(): break
+          if not caps or t.islower(): yield (i, j)
+          if p in "NK" or t.islower(): break
+          j += d
 
-    def rank(move):
-        f_sq, t_sq = move[:2], move[2:4]
-        mover = board[f_sq]
-        victim = board.get(t_sq) or (("p" if white_turn else "P") if mover.lower() == "p" and f_sq[0] != t_sq[0] else None)
-        taken = VALS[victim.lower()] if victim else 0
-        promo = VALS[move[4].lower()] if len(move) == 5 else 0
-        mover_val = VALS[mover.lower()]
-        pos_delta = int(center_dist(t_sq) * 8 - center_dist(f_sq) * 8)
-        score = taken * 12 + promo * 10 + pos_delta
-        if attacked(t_sq, opp, board):
-            loss = mover_val - taken
-            score -= (loss * 12 if loss > 0 else 50)
-        if attacked(f_sq, opp, board) and not attacked(t_sq, opp, board):
-            score += mover_val * 6
-        return (-score, -promo, mover_val, move)
+def make_move(b, i, j):
+  nb, p = b[:], b[i]
+  nb[i], nb[j] = ".", "Q" if p == "P" and j // 10 == 2 else p
+  if p == "K" and abs(j - i) == 2:
+    nb[96 if j == 97 else 94], nb[98 if j == 97 else 91] = nb[98 if j == 97 else 91], "."
+  return nb
 
-    return min(legal, key=rank)
+def search(b, depth, alpha, beta):
+  if depth <= 0:
+    sp = eval_pos(b)
+    if sp >= beta: return beta
+    alpha = max(alpha, sp)
+    if depth <= -3: return alpha
+  for i, j in sorted(gen_moves(b, depth <= 0), key=lambda m: move_score(b, m[0], m[1]), reverse=True):
+    if b[j] == "k": return 19000 + max(0, depth)
+    sc = -search(rot(make_move(b, i, j)), depth - 1, -beta, -alpha)
+    if sc >= beta: return beta
+    alpha = max(alpha, sc)
+  return alpha
+
+def choose(fen, legal, depth=3):
+  w = fen.split()[1] == "w"
+  b = rot(fen_to_board(fen)) if not w else fen_to_board(fen)
+  d = depth + (1 if sum(1 for c in b if c.upper() in "NBRQ") <= 4 else 0)
+  sq = lambda s: 119 - sq_to_i(s) if not w else sq_to_i(s)
+  parsed = sorted([(sq(m[:2]), sq(m[2:4]), m) for m in legal], key=lambda m: move_score(b, m[0], m[1]), reverse=True)
+  best_m, best_s, alpha = legal[0], -1e9, -1e9
+  for f, t, uci in parsed:
+    if b[t] == "k": return uci
+    sc = -search(rot(make_move(b, f, t)), d - 1, -1e9, -alpha)
+    if sc > best_s: best_s, best_m = sc, uci
+    alpha = max(alpha, sc)
+  return best_m
 
 while True:
-    g = post("/game", {})
-    if g["status"] == "done": break
-    while g["status"] == "your_move":
-        g = post("/move", {"game": g["game"], "move": choose(g["fen"], g["legal_moves"])})
-    print(f"game {g['game']}: {g['outcome']} by {g['reason']}", file=sys.stderr)
-print(f"done: {g.get('wins')} won, {g.get('draws')} drawn, {g.get('losses')} lost", file=sys.stderr)
+  g = post("/game", {})
+  if g.get("status") == "done": break
+  while g.get("status") in ("your_move", "playing"):
+    leg = g.get("legal_moves") or g.get("legal", [])
+    if not leg: break
+    g = post("/move", {"game": g.get("game") or g.get("game_id"), "move": choose(g["fen"], leg)})
