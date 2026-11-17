@@ -8,8 +8,8 @@ High-performance micro chess engine built for the make.fun [tiny-chess-01 bounty
 
 ## Architecture
 
-- **Search**: Alpha-Beta minimax search (depth 3) with full quiescence capture extension to eliminate horizon tactical blunders.
-- **Evaluation**: Piece-Square Tables (PST) optimizing center control for pawns/knights/bishops and penalizing king vulnerability.
+- **Search**: Alpha-Beta minimax search (depth 4, dynamic depth 5-6 in late endgame) with full quiescence capture extension up to depth -3 to eliminate horizon tactical blunders.
+- **Evaluation**: Compact Base64-encoded Piece-Square Tables (PST) optimizing center control for pawns/knights/bishops/kings.
 - **Move Ordering**: Dynamic MVV-LVA (Most Valuable Victim - Least Valuable Attacker) capture ordering maximizing cutoffs.
 - **Efficiency**: 100% deterministic pure Python 3 standard library implementation, completing all decisions in < 15ms.
 - **Size**: Strict footprint under 4,096 bytes.
